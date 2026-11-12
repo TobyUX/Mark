@@ -4,6 +4,7 @@ Screenshot something that needs changing on Android. Share it to Mark, circle it
 
 - **Log** — creates a Jira ticket with the marked screenshot and posts it to your Slack channel
 - **Build** — same as Log, then asks `@Cursor` in Slack to do that ticket (uses *your* Cursor account)
+- **Walkthrough** — record the screen while you navigate and talk; Highlight to draw; Done → Log or Build with video, transcript, and highlight stills
 
 Secrets stay on the phone. Mark does not ship with anyone else's Slack or Jira.
 

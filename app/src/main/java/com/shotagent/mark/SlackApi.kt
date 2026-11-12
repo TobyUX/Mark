@@ -37,7 +37,32 @@ class SlackApi(private val token: String) {
         cursorUserId: String?,
     ): ApiCall<PostedMessage> {
         val comment = withMention(text, mentionCursor, cursorUserId)
-        return uploadFile(channelId, png, comment)
+        return uploadBytes(channelId, "mark.png", "image/png", png, comment)
+    }
+
+    fun postFiles(
+        channelId: String,
+        text: String,
+        files: List<AttachmentFile>,
+        mentionCursor: Boolean,
+        cursorUserId: String?,
+    ): ApiCall<PostedMessage> {
+        if (files.isEmpty()) {
+            return postText(channelId, text, mentionCursor, cursorUserId)
+        }
+        val comment = withMention(text, mentionCursor, cursorUserId)
+        var last: ApiCall<PostedMessage> = ApiCall.Err("No files")
+        files.forEachIndexed { index, file ->
+            last = uploadBytes(
+                channelId = channelId,
+                filename = file.filename,
+                mimeType = file.mimeType,
+                bytes = file.bytes,
+                initialComment = if (index == 0) comment else "",
+            )
+            if (last is ApiCall.Err) return last
+        }
+        return last
     }
 
     fun postText(
@@ -124,19 +149,21 @@ class SlackApi(private val token: String) {
         return "$mention\n\n${text.trim()}".trim()
     }
 
-    private fun uploadFile(
+    private fun uploadBytes(
         channelId: String,
-        png: ByteArray,
+        filename: String,
+        mimeType: String,
+        bytes: ByteArray,
         initialComment: String,
     ): ApiCall<PostedMessage> {
-        val length = png.size
+        val length = bytes.size
         val getUrlRequest = Request.Builder()
             .url("$BASE/files.getUploadURLExternal")
             .header("Authorization", "Bearer $token")
             .post(
                 MultipartBody.Builder()
                     .setType(MultipartBody.FORM)
-                    .addFormDataPart("filename", "mark.png")
+                    .addFormDataPart("filename", filename)
                     .addFormDataPart("length", length.toString())
                     .build(),
             )
@@ -151,7 +178,7 @@ class SlackApi(private val token: String) {
 
         val put = Request.Builder()
             .url(uploadUrl)
-            .post(png.toRequestBody("image/png".toMediaType()))
+            .post(bytes.toRequestBody(mimeType.toMediaType()))
             .build()
         client.newCall(put).execute().use { response ->
             if (!response.isSuccessful) {
@@ -159,18 +186,20 @@ class SlackApi(private val token: String) {
             }
         }
 
-        val completeBody = JSONObject()
+        val completeBuilder = JSONObject()
             .put(
                 "files",
-                JSONArray().put(JSONObject().put("id", fileId).put("title", "Mark screenshot")),
+                JSONArray().put(JSONObject().put("id", fileId).put("title", filename)),
             )
             .put("channel_id", channelId)
-            .put("initial_comment", initialComment)
+        if (initialComment.isNotBlank()) {
+            completeBuilder.put("initial_comment", initialComment)
+        }
         val complete = Request.Builder()
             .url("$BASE/files.completeUploadExternal")
             .header("Authorization", "Bearer $token")
             .header("Content-Type", "application/json; charset=utf-8")
-            .post(completeBody.toString().toRequestBody(JSON))
+            .post(completeBuilder.toString().toRequestBody(JSON))
             .build()
         return execute(complete) { body ->
             val json = JSONObject(body)

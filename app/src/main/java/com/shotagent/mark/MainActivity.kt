@@ -3,9 +3,11 @@ package com.shotagent.mark
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,9 +33,11 @@ import androidx.lifecycle.lifecycleScope
 import com.shotagent.mark.ui.AboutScreen
 import com.shotagent.mark.ui.SetupScreen
 import com.shotagent.mark.ui.ShareScreen
+import com.shotagent.mark.ui.WalkthroughReviewScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val store by lazy { SettingsStore(this) }
@@ -41,15 +45,43 @@ class MainActivity : ComponentActivity() {
     private var sharedError by mutableStateOf<String?>(null)
     private var shareToken by mutableStateOf(0)
     private var micGranted by mutableStateOf(false)
+    private var walkthroughSession by mutableStateOf<WalkthroughSession?>(null)
+    private var walkStatus by mutableStateOf<String?>(null)
+
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         micGranted = granted
+        if (granted && pendingWalkthrough) {
+            pendingWalkthrough = false
+            requestOverlayThenProjection()
+        }
     }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val overlaySettings = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (Settings.canDrawOverlays(this)) {
+            requestProjection()
+        } else {
+            walkStatus = "Mark needs overlay permission for the floating Done button."
+        }
+    }
+    private val projectionPermission = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == RESULT_OK && data != null) {
+            WalkthroughService.start(this, result.resultCode, data)
+            moveTaskToBack(true)
+        } else {
+            walkStatus = "Screen capture was not allowed."
+        }
+    }
+
+    private var pendingWalkthrough = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, true)
         consumeShare(intent)
+        consumeWalkthrough(intent)
         micGranted = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
         if (shareToken > 0 && store.isReady && !micGranted) {
@@ -129,8 +161,50 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    fun runWalkthrough(build: Boolean) {
+                        val session = walkthroughSession ?: return
+                        if (sending) return
+                        sending = true
+                        walkStatus = null
+                        lifecycleScope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                val workflow = MarkWorkflow(store)
+                                if (build) {
+                                    workflow.buildWalkthrough(session)
+                                } else {
+                                    workflow.logWalkthrough(session)
+                                }
+                            }
+                            sending = false
+                            walkStatus = when (result) {
+                                is ApiCall.Err -> result.message
+                                is ApiCall.Ok -> {
+                                    if (result.value.built) {
+                                        "Built ${result.value.issue.key}. Cursor was asked in Slack."
+                                    } else {
+                                        "Logged ${result.value.issue.key} and posted to Slack."
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     val openingShare = shareToken > 0
+                    val reviewingWalk = walkthroughSession != null
                     when {
+                        reviewingWalk -> {
+                            val session = walkthroughSession!!
+                            WalkthroughReviewScreen(
+                                stillCount = session.stillFiles.size,
+                                hasVideo = session.videoFile != null,
+                                transcript = session.transcript,
+                                sending = sending,
+                                status = walkStatus,
+                                onLog = { runWalkthrough(false) },
+                                onBuild = { runWalkthrough(true) },
+                            )
+                        }
+
                         openingShare && ready -> {
                             val loaded = bitmap
                             if (loaded == null) {
@@ -229,18 +303,27 @@ class MainActivity : ComponentActivity() {
                         }
 
                         else -> {
-                            AboutScreen(
-                                setupReady = ready,
-                                onOpenSetup = { showSetup = true },
-                                onFeedback = {
-                                    startActivity(
-                                        Intent(
-                                            Intent.ACTION_VIEW,
-                                            Uri.parse(SettingsStore.FEEDBACK_URL),
-                                        ),
+                            Column(Modifier.fillMaxSize()) {
+                                AboutScreen(
+                                    setupReady = ready,
+                                    onOpenSetup = { showSetup = true },
+                                    onStartWalkthrough = { beginWalkthrough() },
+                                    onFeedback = {
+                                        startActivity(
+                                            Intent(
+                                                Intent.ACTION_VIEW,
+                                                Uri.parse(SettingsStore.FEEDBACK_URL),
+                                            ),
+                                        )
+                                    },
+                                )
+                                if (!walkStatus.isNullOrBlank()) {
+                                    Text(
+                                        walkStatus ?: "",
+                                        modifier = Modifier.padding(24.dp),
                                     )
-                                },
-                            )
+                                }
+                            }
                         }
                     }
                 }
@@ -252,9 +335,55 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         consumeShare(intent)
+        consumeWalkthrough(intent)
         if (shareToken > 0 && store.isReady && !micGranted) {
             micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
         }
+    }
+
+    private fun beginWalkthrough() {
+        walkStatus = null
+        if (!store.isReady) {
+            walkStatus = "Set up Slack and Jira first."
+            return
+        }
+        if (!micGranted) {
+            pendingWalkthrough = true
+            micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        requestOverlayThenProjection()
+    }
+
+    private fun requestOverlayThenProjection() {
+        if (!Settings.canDrawOverlays(this)) {
+            overlaySettings.launch(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+            return
+        }
+        requestProjection()
+    }
+
+    private fun requestProjection() {
+        val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        projectionPermission.launch(mgr.createScreenCaptureIntent())
+    }
+
+    private fun consumeWalkthrough(intent: Intent?) {
+        if (intent?.action != WalkthroughService.ACTION_REVIEW) return
+        val transcript = intent.getStringExtra(WalkthroughService.EXTRA_TRANSCRIPT).orEmpty()
+        val videoPath = intent.getStringExtra(WalkthroughService.EXTRA_VIDEO_PATH)
+        val stillPaths = intent.getStringArrayListExtra(WalkthroughService.EXTRA_STILL_PATHS).orEmpty()
+        walkthroughSession = WalkthroughSession(
+            videoFile = videoPath?.let { File(it) }?.takeIf { it.exists() },
+            transcript = transcript,
+            stillFiles = stillPaths.map(::File).filter { it.exists() },
+        )
+        walkStatus = null
     }
 
     private fun consumeShare(intent: Intent?) {
