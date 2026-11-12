@@ -19,9 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -120,8 +118,6 @@ fun ShareScreen(
         Modifier
             .fillMaxSize()
             .background(Color(0xFF121212))
-            .statusBarsPadding()
-            .navigationBarsPadding()
             .imePadding(),
     ) {
         Row(
