@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 fun AboutScreen(
     setupReady: Boolean,
     onOpenSetup: () -> Unit,
+    onStartWalkthrough: () -> Unit,
     onFeedback: () -> Unit,
 ) {
     Column(
@@ -37,14 +38,28 @@ fun AboutScreen(
             Text("Mark", style = MaterialTheme.typography.headlineLarge)
             Spacer(Modifier.height(12.dp))
             Text(
-                "Screenshot something that needs changing. Share it to Mark. Circle it, say what to do, then choose Log or Build.",
+                "Screenshot something that needs changing, or record a walkthrough while you talk. Then Log or Build.",
                 style = MaterialTheme.typography.bodyLarge,
             )
             Spacer(Modifier.height(20.dp))
+            Text("Still", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Share a screenshot to Mark, circle it, say what to do, then Log or Build.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(16.dp))
+            Text("Walkthrough", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Record the screen while you navigate. Tap Highlight to draw, Done when finished. Mark saves the video, transcript, and highlight stills.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(16.dp))
             Text("Log", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Creates a Jira ticket with your marked screenshot and posts it to your Slack channel. No agent run.",
+                "Creates a Jira ticket and posts it to your Slack channel. No agent run.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.height(16.dp))
@@ -65,6 +80,14 @@ fun AboutScreen(
             )
             Spacer(Modifier.height(24.dp))
             Button(
+                onClick = onStartWalkthrough,
+                enabled = setupReady,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Start walkthrough")
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
                 onClick = onOpenSetup,
                 modifier = Modifier.fillMaxWidth(),
             ) {

@@ -42,6 +42,18 @@ class JiraApi(
         summary: String,
         description: String,
         png: ByteArray,
+    ): ApiCall<CreatedIssue> = createIssueWithAttachments(
+        projectKey = projectKey,
+        summary = summary,
+        description = description,
+        files = listOf(AttachmentFile("mark.png", "image/png", png)),
+    )
+
+    fun createIssueWithAttachments(
+        projectKey: String,
+        summary: String,
+        description: String,
+        files: List<AttachmentFile>,
     ): ApiCall<CreatedIssue> {
         val issueType = resolveIssueType(projectKey)
         if (issueType is ApiCall.Err) return issueType
@@ -74,9 +86,13 @@ class JiraApi(
         if (created is ApiCall.Err) return created
         val issue = (created as ApiCall.Ok).value
 
-        val attach = attachPng(issue.key, png)
-        if (attach is ApiCall.Err) {
-            return ApiCall.Err("Created ${issue.key}, but could not attach the screenshot: ${attach.message}")
+        files.forEach { file ->
+            val attach = attachFile(issue.key, file)
+            if (attach is ApiCall.Err) {
+                return ApiCall.Err(
+                    "Created ${issue.key}, but could not attach ${file.filename}: ${attach.message}",
+                )
+            }
         }
         return ApiCall.Ok(issue)
     }
@@ -110,7 +126,7 @@ class JiraApi(
         }
     }
 
-    private fun attachPng(issueKey: String, png: ByteArray): ApiCall<Unit> {
+    private fun attachFile(issueKey: String, file: AttachmentFile): ApiCall<Unit> {
         val request = Request.Builder()
             .url("$base/issue/$issueKey/attachments")
             .header("Authorization", auth)
@@ -121,8 +137,8 @@ class JiraApi(
                     .setType(MultipartBody.FORM)
                     .addFormDataPart(
                         "file",
-                        "mark.png",
-                        png.toRequestBody("image/png".toMediaType()),
+                        file.filename,
+                        file.bytes.toRequestBody(file.mimeType.toMediaType()),
                     )
                     .build(),
             )
@@ -176,4 +192,10 @@ class JiraApi(
 data class CreatedIssue(
     val key: String,
     val url: String,
+)
+
+data class AttachmentFile(
+    val filename: String,
+    val mimeType: String,
+    val bytes: ByteArray,
 )
