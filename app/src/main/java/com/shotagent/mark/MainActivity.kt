@@ -385,12 +385,13 @@ class MainActivity : ComponentActivity() {
         val transcript = intent.getStringExtra(WalkthroughService.EXTRA_TRANSCRIPT).orEmpty()
         val videoPath = intent.getStringExtra(WalkthroughService.EXTRA_VIDEO_PATH)
         val stillPaths = intent.getStringArrayListExtra(WalkthroughService.EXTRA_STILL_PATHS).orEmpty()
+        val error = intent.getStringExtra(WalkthroughService.EXTRA_ERROR)
         walkthroughSession = WalkthroughSession(
             videoFile = videoPath?.let { File(it) }?.takeIf { it.exists() },
             transcript = transcript,
             stillFiles = stillPaths.map(::File).filter { it.exists() },
         )
-        walkStatus = null
+        walkStatus = error
     }
 
     private fun consumeShare(intent: Intent?) {
