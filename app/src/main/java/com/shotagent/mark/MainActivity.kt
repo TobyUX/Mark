@@ -35,6 +35,7 @@ import androidx.lifecycle.lifecycleScope
 import com.shotagent.mark.ui.AboutScreen
 import com.shotagent.mark.ui.SetupScreen
 import com.shotagent.mark.ui.ShareScreen
+import com.shotagent.mark.ui.SuccessScreen
 import com.shotagent.mark.ui.WalkthroughReviewScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -116,6 +117,20 @@ class MainActivity : ComponentActivity() {
                     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
                     var sending by remember { mutableStateOf(false) }
                     var shareStatus by remember { mutableStateOf<String?>(null) }
+                    var success by remember { mutableStateOf<LogResult?>(null) }
+
+                    fun clearShareSession() {
+                        sharedBytes = null
+                        sharedError = null
+                        shareToken = 0
+                        bitmap = null
+                        shareStatus = null
+                    }
+
+                    fun clearWalkthroughSession() {
+                        walkthroughSession = null
+                        walkStatus = null
+                    }
 
                     val ready = slackToken.isNotBlank() &&
                         channelId.isNotBlank() &&
@@ -146,7 +161,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     fun runAction(build: Boolean, png: ByteArray, transcript: String) {
-                        if (sending) return
+                        if (sending || success != null) return
                         sending = true
                         shareStatus = null
                         lifecycleScope.launch {
@@ -155,14 +170,11 @@ class MainActivity : ComponentActivity() {
                                 if (build) workflow.build(png, transcript) else workflow.log(png, transcript)
                             }
                             sending = false
-                            shareStatus = when (result) {
-                                is ApiCall.Err -> result.message
+                            when (result) {
+                                is ApiCall.Err -> shareStatus = result.message
                                 is ApiCall.Ok -> {
-                                    if (result.value.built) {
-                                        "Built ${result.value.issue.key}. Cursor was asked in Slack."
-                                    } else {
-                                        "Logged ${result.value.issue.key} and posted to Slack."
-                                    }
+                                    clearShareSession()
+                                    success = result.value
                                 }
                             }
                         }
@@ -170,7 +182,7 @@ class MainActivity : ComponentActivity() {
 
                     fun runWalkthrough(build: Boolean) {
                         val session = walkthroughSession ?: return
-                        if (sending) return
+                        if (sending || success != null) return
                         sending = true
                         walkStatus = null
                         lifecycleScope.launch {
@@ -183,14 +195,11 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             sending = false
-                            walkStatus = when (result) {
-                                is ApiCall.Err -> result.message
+                            when (result) {
+                                is ApiCall.Err -> walkStatus = result.message
                                 is ApiCall.Ok -> {
-                                    if (result.value.built) {
-                                        "Built ${result.value.issue.key}. Cursor was asked in Slack."
-                                    } else {
-                                        "Logged ${result.value.issue.key} and posted to Slack."
-                                    }
+                                    clearWalkthroughSession()
+                                    success = result.value
                                 }
                             }
                         }
@@ -198,7 +207,19 @@ class MainActivity : ComponentActivity() {
 
                     val openingShare = shareToken > 0
                     val reviewingWalk = walkthroughSession != null
+                    val completed = success
                     when {
+                        completed != null -> {
+                            SuccessScreen(
+                                result = completed,
+                                onDone = {
+                                    success = null
+                                    clearShareSession()
+                                    clearWalkthroughSession()
+                                },
+                            )
+                        }
+
                         reviewingWalk -> {
                             val session = walkthroughSession!!
                             WalkthroughReviewScreen(
@@ -234,6 +255,7 @@ class MainActivity : ComponentActivity() {
                                     sending = sending,
                                     status = shareStatus,
                                     micGranted = micGranted,
+                                    speechEnabled = !sending,
                                     onLog = { png, transcript -> runAction(false, png, transcript) },
                                     onBuild = { png, transcript -> runAction(true, png, transcript) },
                                 )

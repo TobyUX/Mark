@@ -33,7 +33,15 @@ class MarkWorkflow(private val store: SettingsStore) {
         if (posted is ApiCall.Err) {
             return ApiCall.Err("Created ${created.key}, but Slack failed: ${posted.message}")
         }
-        return ApiCall.Ok(LogResult(issue = created, built = false))
+        val slackMsg = (posted as ApiCall.Ok).value
+        return ApiCall.Ok(
+            LogResult(
+                issue = created,
+                built = false,
+                slackPermalink = slackMsg.permalink
+                    ?: "https://slack.com/app_redirect?channel=${slackMsg.channelId}",
+            ),
+        )
     }
 
     fun build(png: ByteArray, transcript: String): ApiCall<LogResult> {
@@ -97,7 +105,15 @@ class MarkWorkflow(private val store: SettingsStore) {
         if (posted is ApiCall.Err) {
             return ApiCall.Err("Created ${created.key}, but Slack failed: ${posted.message}")
         }
-        return ApiCall.Ok(LogResult(issue = created, built = false))
+        val slackMsg = (posted as ApiCall.Ok).value
+        return ApiCall.Ok(
+            LogResult(
+                issue = created,
+                built = false,
+                slackPermalink = slackMsg.permalink
+                    ?: "https://slack.com/app_redirect?channel=${slackMsg.channelId}",
+            ),
+        )
     }
 
     fun buildWalkthrough(session: WalkthroughSession): ApiCall<LogResult> {
@@ -142,6 +158,7 @@ class MarkWorkflow(private val store: SettingsStore) {
 data class LogResult(
     val issue: CreatedIssue,
     val built: Boolean,
+    val slackPermalink: String? = null,
 )
 
 fun promptText(instruction: String, transcript: String): String {

@@ -64,6 +64,7 @@ fun ShareScreen(
     sending: Boolean,
     status: String?,
     micGranted: Boolean,
+    speechEnabled: Boolean = true,
     onLog: (ByteArray, String) -> Unit,
     onBuild: (ByteArray, String) -> Unit,
 ) {
@@ -91,8 +92,8 @@ fun ShareScreen(
         }
     }
 
-    DisposableEffect(micGranted) {
-        if (!micGranted || !SpeechRecognizer.isRecognitionAvailable(context)) {
+    DisposableEffect(micGranted, speechEnabled, sending) {
+        if (!micGranted || !speechEnabled || sending || !SpeechRecognizer.isRecognitionAvailable(context)) {
             onDispose { }
         } else {
             val recognizer = SpeechRecognizer.createSpeechRecognizer(context)

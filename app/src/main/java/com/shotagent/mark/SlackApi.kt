@@ -83,9 +83,13 @@ class SlackApi(private val token: String) {
         return execute(request) { raw ->
             val json = JSONObject(raw)
             requireOk(json)
+            val channel = json.optString("channel").ifBlank { channelId }
+            val ts = json.optString("ts")
             PostedMessage(
-                channelId = channelId,
-                fileId = json.optString("ts"),
+                channelId = channel,
+                messageTs = ts.ifBlank { null },
+                fileId = null,
+                permalink = slackArchiveUrl(channel, ts),
             )
         }
     }
@@ -204,7 +208,16 @@ class SlackApi(private val token: String) {
         return execute(complete) { body ->
             val json = JSONObject(body)
             requireOk(json)
-            PostedMessage(channelId = channelId, fileId = fileId)
+            val files = json.optJSONArray("files")
+            val first = files?.optJSONObject(0)
+            val permalink = first?.optString("permalink")?.takeIf { it.isNotBlank() }
+                ?: first?.optString("url_private")?.takeIf { it.isNotBlank() }
+            PostedMessage(
+                channelId = channelId,
+                messageTs = null,
+                fileId = fileId,
+                permalink = permalink,
+            )
         }
     }
 
@@ -237,10 +250,17 @@ class SlackApi(private val token: String) {
     companion object {
         private const val BASE = "https://slack.com/api"
         private val JSON = "application/json; charset=utf-8".toMediaType()
+
+        fun slackArchiveUrl(channelId: String, ts: String): String? {
+            if (channelId.isBlank() || ts.isBlank()) return null
+            return "https://slack.com/archives/$channelId/p${ts.replace(".", "")}"
+        }
     }
 }
 
 data class PostedMessage(
     val channelId: String,
-    val fileId: String,
+    val messageTs: String? = null,
+    val fileId: String? = null,
+    val permalink: String? = null,
 )
