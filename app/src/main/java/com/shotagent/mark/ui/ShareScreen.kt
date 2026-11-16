@@ -21,13 +21,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -67,7 +71,25 @@ fun ShareScreen(
     var strokes by remember { mutableStateOf(listOf<MarkStroke>()) }
     var active by remember { mutableStateOf<MarkStroke?>(null) }
     var color by remember { mutableStateOf(Color.Red) }
-    var transcript by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    var livePartial by remember { mutableStateOf("") }
+    var speechRestartAttempt by remember { mutableIntStateOf(0) }
+
+    fun noteForSend(): String =
+        listOf(note.trim(), livePartial.trim())
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+            .trim()
+
+    fun appendSpoken(text: String) {
+        val cleaned = text.trim()
+        if (cleaned.isEmpty()) return
+        note = when {
+            note.isBlank() -> cleaned
+            note.trim().endsWith(cleaned) -> note
+            else -> "${note.trim()} $cleaned"
+        }
+    }
 
     DisposableEffect(micGranted) {
         if (!micGranted || !SpeechRecognizer.isRecognitionAvailable(context)) {
@@ -76,39 +98,71 @@ fun ShareScreen(
             val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
             val handler = Handler(Looper.getMainLooper())
             var listening = true
-            fun start() {
-                if (!listening) return
+            val restart = Runnable {
+                if (!listening) return@Runnable
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2_500)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2_000)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1_500)
                 }
-                recognizer.startListening(intent)
+                runCatching {
+                    recognizer.cancel()
+                    recognizer.startListening(intent)
+                }
+            }
+            fun scheduleRestart(delayMs: Long) {
+                handler.removeCallbacks(restart)
+                if (listening) handler.postDelayed(restart, delayMs)
             }
             recognizer.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) = Unit
+                override fun onReadyForSpeech(params: Bundle?) {
+                    speechRestartAttempt = 0
+                }
                 override fun onBeginningOfSpeech() = Unit
                 override fun onRmsChanged(rmsdB: Float) = Unit
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
                 override fun onEndOfSpeech() = Unit
                 override fun onEvent(eventType: Int, params: Bundle?) = Unit
                 override fun onPartialResults(partial: Bundle?) {
-                    val text = partial.bestText()
-                    if (text.isNotBlank()) transcript = text
+                    livePartial = partial.bestText()
                 }
                 override fun onResults(results: Bundle?) {
-                    val text = results.bestText()
-                    if (text.isNotBlank()) transcript = text
-                    handler.post { start() }
+                    val text = results.bestText().ifBlank { livePartial }
+                    appendSpoken(text)
+                    livePartial = ""
+                    scheduleRestart(350L)
                 }
                 override fun onError(error: Int) {
-                    if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) return
-                    handler.postDelayed({ start() }, 400)
+                    when (error) {
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> return
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+                        SpeechRecognizer.ERROR_CLIENT,
+                        -> {
+                            speechRestartAttempt += 1
+                            scheduleRestart((500L * speechRestartAttempt).coerceAtMost(2_500L))
+                        }
+                        else -> {
+                            if (livePartial.isNotBlank()) {
+                                appendSpoken(livePartial)
+                                livePartial = ""
+                            }
+                            scheduleRestart(400L)
+                        }
+                    }
                 }
             })
-            start()
+            restart.run()
             onDispose {
                 listening = false
                 handler.removeCallbacksAndMessages(null)
+                if (livePartial.isNotBlank()) {
+                    appendSpoken(livePartial)
+                    livePartial = ""
+                }
+                runCatching { recognizer.stopListening() }
                 recognizer.destroy()
             }
         }
@@ -189,14 +243,43 @@ fun ShareScreen(
                 }
             }
         }
-        Text(
-            text = when {
-                !micGranted -> "Allow the microphone to dictate. You can still circle and send."
-                transcript.isBlank() -> "Listening"
-                else -> transcript
+        if (!micGranted) {
+            Text(
+                "Allow the microphone to dictate, or type the note below.",
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+        OutlinedTextField(
+            value = note,
+            onValueChange = { note = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 72.dp)
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            label = {
+                Text(
+                    when {
+                        livePartial.isNotBlank() -> "Listening…"
+                        note.isBlank() -> "Say or type what to change"
+                        else -> "Note"
+                    },
+                )
             },
-            color = Color.White,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            supportingText = {
+                if (livePartial.isNotBlank()) {
+                    Text(livePartial, color = Color(0xFFB0B0B0))
+                }
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                focusedBorderColor = Color(0xFF9A82DB),
+                unfocusedBorderColor = Color(0xFF666666),
+                focusedLabelColor = Color(0xFFB0B0B0),
+                unfocusedLabelColor = Color(0xFF888888),
+                cursorColor = Color.White,
+            ),
         )
         if (!status.isNullOrBlank()) {
             Text(
@@ -206,14 +289,14 @@ fun ShareScreen(
             )
         }
         Button(
-            onClick = { onLog(pngUnderLimit(flatten(bitmap, strokes)), transcript) },
+            onClick = { onLog(pngUnderLimit(flatten(bitmap, strokes)), noteForSend()) },
             enabled = !sending,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
         ) { Text(if (sending) "Working…" else "Log") }
         OutlinedButton(
-            onClick = { onBuild(pngUnderLimit(flatten(bitmap, strokes)), transcript) },
+            onClick = { onBuild(pngUnderLimit(flatten(bitmap, strokes)), noteForSend()) },
             enabled = !sending,
             modifier = Modifier
                 .fillMaxWidth()
